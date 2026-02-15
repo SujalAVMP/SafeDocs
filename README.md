@@ -47,7 +47,7 @@ The system uses **12 tables** across **7 entities**:
 
 ## ER Diagram
 
-See [er_diagram.md](er_diagram.md) for the full Mermaid ER diagram (renders automatically on GitHub).
+See [er_diagram.md](er_diagram.md) for the full Mermaid ER diagram.
 
 ## Repository Structure
 
