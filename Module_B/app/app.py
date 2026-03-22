@@ -20,11 +20,18 @@ from flask import (
     redirect, url_for, make_response, g, flash
 )
 
-from auth import (
-    hash_password, verify_password,
-    create_session_token, verify_session_token, verify_session_token_detailed,
-    login_required, admin_required, log_action, log_document_activity,
-)
+try:
+    from .auth import (
+        hash_password, verify_password,
+        create_session_token, verify_session_token, verify_session_token_detailed,
+        login_required, admin_required, log_action, log_document_activity,
+    )
+except ImportError:
+    from auth import (
+        hash_password, verify_password,
+        create_session_token, verify_session_token, verify_session_token_detailed,
+        login_required, admin_required, log_action, log_document_activity,
+    )
 
 # ===================================================================
 # Flask app setup
