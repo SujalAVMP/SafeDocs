@@ -78,9 +78,8 @@ erDiagram
     }
 
     DocumentVersion {
-        INT VersionID PK
-        INT DocumentID FK
-        INT VersionNumber "NOT NULL, CHECK > 0"
+        INT DocumentID PK_FK "Identifying relationship"
+        INT VersionNumber PK "Partial key, CHECK > 0"
         VARCHAR FilePath "NOT NULL"
         BIGINT FileSize "NOT NULL"
         INT UploadedBy FK

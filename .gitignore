@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.vscode
+*.egg-info/
+.ipynb_checkpoints/
+Course Projects - Track 1_Assignment 1.pdf
+Course Projects - Track 1_Assignment 2.pdf
+Databases_CS432__2026_Track 1.pdf

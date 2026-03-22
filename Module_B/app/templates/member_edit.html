@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}SafeDocs - Edit Member{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-8 col-lg-6">
+    <h4 class="mb-4">Edit Member: {{ member.Name }}</h4>
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <form id="editMemberForm">
+          <div class="mb-3">
+            <label class="form-label">Name</label>
+            <input type="text" class="form-control" name="Name"
+                   value="{{ member.Name }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Email</label>
+            <input type="email" class="form-control" name="Email"
+                   value="{{ member.Email }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Contact Number</label>
+            <input type="text" class="form-control" name="ContactNumber"
+                   value="{{ member.ContactNumber }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Age</label>
+            <input type="number" class="form-control" name="Age"
+                   value="{{ member.Age or '' }}" min="18">
+          </div>
+          {% if role_id == 1 %}
+          <div class="mb-3">
+            <label class="form-label">Department</label>
+            <select class="form-select" name="DepartmentID">
+              {% for dept in departments %}
+              <option value="{{ dept.DepartmentID }}"
+                      {% if dept.DepartmentID == member.DepartmentID %}selected{% endif %}>
+                {{ dept.DeptName }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Role</label>
+            <select class="form-select" name="RoleID">
+              {% for r in roles %}
+              <option value="{{ r.RoleID }}"
+                      {% if r.RoleID == member.RoleID %}selected{% endif %}>
+                {{ r.RoleName }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          <div class="d-flex justify-content-between">
+            <a href="{{ url_for('members_page') }}" class="btn btn-secondary">Cancel</a>
+            <button type="button" class="btn btn-primary" onclick="saveMember()">
+              <i class="bi bi-check-circle me-1"></i> Save Changes
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function saveMember() {
+  const form = document.getElementById('editMemberForm');
+  const data = {};
+  new FormData(form).forEach((v, k) => {
+    if (['Age', 'DepartmentID', 'RoleID'].includes(k)) {
+      v = parseInt(v) || null;
+    }
+    data[k] = v;
+  });
+  fetch('/api/members/{{ member.MemberID }}', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  }).then(r => r.json()).then(d => {
+    if (d.error) { alert(d.error); return; }
+    alert('Member updated successfully.');
+    window.location.href = '/members';
+  }).catch(e => alert('Error: ' + e));
+}
+</script>
+{% endblock %}

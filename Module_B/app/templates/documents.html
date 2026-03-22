@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}SafeDocs - Documents{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="mb-0">Documents</h4>
+  {% if role_id in [1, 2, 3] %}
+  <a href="{{ url_for('document_new_page') }}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-circle me-1"></i> New Document
+  </a>
+  {% endif %}
+</div>
+
+<!-- Filters -->
+<div class="row g-2 mb-3">
+  <div class="col-md-6">
+    <input type="text" id="docSearch" class="form-control"
+           placeholder="Search documents by title, uploader, or folder...">
+  </div>
+  <div class="col-md-3">
+    <select id="folderFilter" class="form-select">
+      <option value="">All Folders</option>
+      {% for f in folders %}
+      <option value="{{ f.FolderName }}">{{ f.FolderName }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" id="docsTable">
+        <thead class="table-light">
+          <tr>
+            <th>ID</th>
+            <th>Title</th>
+            <th>Uploader</th>
+            <th>Folder</th>
+            <th>Size</th>
+            <th>Confidential</th>
+            <th>Date</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in documents %}
+          <tr data-folder="{{ d.FolderName }}">
+            <td>{{ d.DocumentID }}</td>
+            <td>{{ d.Title }}</td>
+            <td>{{ d.UploaderName }}</td>
+            <td><span class="badge bg-light text-dark">{{ d.FolderName }}</span></td>
+            <td>{{ "%.1f KB"|format(d.FileSize / 1024) if d.FileSize else 'N/A' }}</td>
+            <td>
+              {% if d.IsConfidential %}
+                <span class="badge bg-danger">Yes</span>
+              {% else %}
+                <span class="badge bg-light text-dark">No</span>
+              {% endif %}
+            </td>
+            <td>{{ d.CreatedAt.strftime('%Y-%m-%d') if d.CreatedAt else '' }}</td>
+            <td>
+              {% if role_id in [1, 2, 3] %}
+              <a href="{{ url_for('document_edit_page', doc_id=d.DocumentID) }}"
+                 class="btn btn-outline-primary btn-sm me-1" title="Edit">
+                <i class="bi bi-pencil"></i>
+              </a>
+              {% endif %}
+              {% if role_id in [1, 2] %}
+              <button class="btn btn-outline-danger btn-sm" title="Delete"
+                      onclick="deleteDocument({{ d.DocumentID }}, '{{ d.Title }}')">
+                <i class="bi bi-trash"></i>
+              </button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Text search
+document.getElementById('docSearch').addEventListener('input', filterDocs);
+document.getElementById('folderFilter').addEventListener('change', filterDocs);
+
+function filterDocs() {
+  const q = document.getElementById('docSearch').value.toLowerCase();
+  const folder = document.getElementById('folderFilter').value;
+  document.querySelectorAll('#docsTable tbody tr').forEach(row => {
+    const matchText = row.textContent.toLowerCase().includes(q);
+    const matchFolder = !folder || row.dataset.folder === folder;
+    row.style.display = (matchText && matchFolder) ? '' : 'none';
+  });
+}
+
+function deleteDocument(id, title) {
+  if (!confirm('Delete document "' + title + '"?')) return;
+  fetch('/api/documents/' + id, { method: 'DELETE' })
+    .then(r => r.json()).then(d => {
+      if (d.error) { alert(d.error); return; }
+      location.reload();
+    }).catch(e => alert('Error: ' + e));
+}
+</script>
+{% endblock %}

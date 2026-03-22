@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}SafeDocs - Login{% endblock %}
+
+{% block content_unauth %}
+<div class="row justify-content-center align-items-center" style="min-height: 100vh;">
+  <div class="col-md-5 col-lg-4">
+    <div class="card shadow">
+      <div class="card-body p-5">
+        <div class="text-center mb-4">
+          <h3><i class="bi bi-shield-lock text-primary"></i></h3>
+          <h4 class="fw-bold">SafeDocs</h4>
+          <p class="text-muted">Secure PDF Management System</p>
+        </div>
+        <form method="POST" action="{{ url_for('login_submit') }}">
+          <div class="mb-3">
+            <label for="username" class="form-label">Username</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-person"></i></span>
+              <input type="text" class="form-control" id="username" name="username"
+                     placeholder="Enter username" required autofocus>
+            </div>
+          </div>
+          <div class="mb-4">
+            <label for="password" class="form-label">Password</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-lock"></i></span>
+              <input type="password" class="form-control" id="password" name="password"
+                     placeholder="Enter password" required>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary w-100 mb-3">
+            <i class="bi bi-box-arrow-in-right me-1"></i> Sign In
+          </button>
+        </form>
+        <hr>
+        <div class="small text-muted">
+          <strong>Demo accounts:</strong><br>
+          admin / admin123 (Admin)<br>
+          priya / priya123 (Manager)<br>
+          ananya / ananya123 (Editor)<br>
+          kavya / kavya123 (Viewer)<br>
+          aditya / aditya123 (Auditor)
+        </div>
+      </div>
+    </div>
+    <p class="text-center text-muted mt-3 small">
+      CS 432 - Databases | IIT Gandhinagar | 2025-2026
+    </p>
+  </div>
+</div>
+{% endblock %}

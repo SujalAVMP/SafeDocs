@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}SafeDocs - Members{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="mb-0">Members</h4>
+  {% if role_id == 1 %}
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMemberModal">
+    <i class="bi bi-plus-circle me-1"></i> Add Member
+  </button>
+  {% endif %}
+</div>
+
+<!-- Search -->
+<div class="mb-3">
+  <input type="text" id="memberSearch" class="form-control"
+         placeholder="Search members by name, email, or department...">
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" id="membersTable">
+        <thead class="table-light">
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Contact</th>
+            <th>Department</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in members %}
+          <tr>
+            <td>{{ m.MemberID }}</td>
+            <td>
+              <a href="{{ url_for('portfolio', member_id=m.MemberID) }}">{{ m.Name }}</a>
+            </td>
+            <td>{{ m.Email }}</td>
+            <td>{{ m.ContactNumber }}</td>
+            <td>{{ m.DeptName }}</td>
+            <td><span class="badge bg-secondary">{{ m.RoleName }}</span></td>
+            <td>
+              {% if m.IsActive %}
+                <span class="badge bg-success">Active</span>
+              {% else %}
+                <span class="badge bg-danger">Inactive</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if role_id == 1 or m.MemberID == member_id %}
+              <a href="{{ url_for('member_edit_page', mid=m.MemberID) }}"
+                 class="btn btn-outline-primary btn-sm me-1" title="Edit">
+                <i class="bi bi-pencil"></i>
+              </a>
+              {% endif %}
+              {% if role_id == 1 %}
+              <button class="btn btn-outline-danger btn-sm" title="Delete"
+                      onclick="deleteMember({{ m.MemberID }}, '{{ m.Name }}')">
+                <i class="bi bi-trash"></i>
+              </button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Add Member Modal (Admin only) -->
+{% if role_id == 1 %}
+<div class="modal fade" id="addMemberModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Add New Member</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="addMemberForm">
+          <div class="mb-3">
+            <label class="form-label">Name</label>
+            <input type="text" class="form-control" name="Name" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Email</label>
+            <input type="email" class="form-control" name="Email" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Contact Number</label>
+            <input type="text" class="form-control" name="ContactNumber" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Age</label>
+            <input type="number" class="form-control" name="Age" min="18">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Department ID</label>
+            <input type="number" class="form-control" name="DepartmentID" required min="1">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Role ID</label>
+            <select class="form-select" name="RoleID" required>
+              <option value="1">Admin</option>
+              <option value="2">Manager</option>
+              <option value="3" selected>Editor</option>
+              <option value="4">Viewer</option>
+              <option value="5">Auditor</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Username</label>
+            <input type="text" class="form-control" name="Username" placeholder="Login username">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Password</label>
+            <input type="password" class="form-control" name="Password" value="changeme">
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="addMember()">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Search filter
+document.getElementById('memberSearch').addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('#membersTable tbody tr').forEach(row => {
+    row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+
+{% if role_id == 1 %}
+function addMember() {
+  const form = document.getElementById('addMemberForm');
+  const data = {};
+  new FormData(form).forEach((v, k) => {
+    if (k === 'Age' || k === 'DepartmentID' || k === 'RoleID') v = parseInt(v) || null;
+    data[k] = v;
+  });
+  fetch('/api/members', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  }).then(r => r.json()).then(d => {
+    if (d.error) { alert(d.error); return; }
+    location.reload();
+  }).catch(e => alert('Error: ' + e));
+}
+
+function deleteMember(id, name) {
+  if (!confirm('Delete member "' + name + '"? This will also remove related records.')) return;
+  fetch('/api/members/' + id, { method: 'DELETE' })
+    .then(r => r.json()).then(d => {
+      if (d.error) { alert(d.error); return; }
+      location.reload();
+    }).catch(e => alert('Error: ' + e));
+}
+{% endif %}
+</script>
+{% endblock %}

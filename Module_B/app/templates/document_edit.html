@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}SafeDocs - {% if document %}Edit{% else %}New{% endif %} Document{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-8 col-lg-6">
+    <h4 class="mb-4">
+      {% if document %}
+        Edit Document: {{ document.Title }}
+      {% else %}
+        Create New Document
+      {% endif %}
+    </h4>
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <form id="docForm">
+          <div class="mb-3">
+            <label class="form-label">Title</label>
+            <input type="text" class="form-control" name="Title"
+                   value="{{ document.Title if document else '' }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Description</label>
+            <textarea class="form-control" name="Description" rows="3">{{ document.Description if document else '' }}</textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Folder</label>
+            <select class="form-select" name="FolderID" required>
+              <option value="">-- Select Folder --</option>
+              {% for f in folders %}
+              <option value="{{ f.FolderID }}"
+                      {% if document and document.FolderID == f.FolderID %}selected{% endif %}>
+                {{ f.FolderName }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3 form-check">
+            <input type="checkbox" class="form-check-input" id="confCheck" name="IsConfidential"
+                   {% if document and document.IsConfidential %}checked{% endif %}>
+            <label class="form-check-label" for="confCheck">Confidential</label>
+          </div>
+
+          {% if not document %}
+          <div class="mb-3">
+            <label class="form-label">File Size (bytes)</label>
+            <input type="number" class="form-control" name="FileSize" value="1024" min="1">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">File Path</label>
+            <input type="text" class="form-control" name="FilePath"
+                   placeholder="/docs/filename.pdf">
+          </div>
+          {% endif %}
+
+          <div class="d-flex justify-content-between">
+            <a href="{{ url_for('documents_page') }}" class="btn btn-secondary">Cancel</a>
+            <button type="button" class="btn btn-primary" onclick="saveDoc()">
+              <i class="bi bi-check-circle me-1"></i>
+              {% if document %}Save Changes{% else %}Create Document{% endif %}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function saveDoc() {
+  const form = document.getElementById('docForm');
+  const fd = new FormData(form);
+  const data = {};
+  fd.forEach((v, k) => {
+    if (k === 'FolderID' || k === 'FileSize') v = parseInt(v) || null;
+    data[k] = v;
+  });
+  // Checkbox handling
+  data['IsConfidential'] = document.getElementById('confCheck').checked;
+
+  {% if document %}
+  // Update existing
+  fetch('/api/documents/{{ document.DocumentID }}', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  }).then(r => r.json()).then(d => {
+    if (d.error) { alert(d.error); return; }
+    alert('Document updated successfully.');
+    window.location.href = '/documents';
+  }).catch(e => alert('Error: ' + e));
+  {% else %}
+  // Create new
+  fetch('/api/documents', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  }).then(r => r.json()).then(d => {
+    if (d.error) { alert(d.error); return; }
+    alert('Document created successfully.');
+    window.location.href = '/documents';
+  }).catch(e => alert('Error: ' + e));
+  {% endif %}
+}
+</script>
+{% endblock %}

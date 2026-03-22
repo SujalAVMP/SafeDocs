@@ -1,0 +1,8 @@
+flask
+pymysql
+pyjwt
+cryptography
+matplotlib
+jupyter
+nbformat
+ipykernel

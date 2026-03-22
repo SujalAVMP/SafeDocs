@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}SafeDocs{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+  <style>
+    body { min-height: 100vh; }
+    .sidebar {
+      min-width: 220px;
+      max-width: 220px;
+      min-height: 100vh;
+      background: #1a1a2e;
+    }
+    .sidebar a {
+      color: #ccc;
+      text-decoration: none;
+      padding: 10px 20px;
+      display: block;
+      transition: 0.2s;
+    }
+    .sidebar a:hover, .sidebar a.active {
+      color: #fff;
+      background: #16213e;
+    }
+    .content { flex: 1; }
+    .navbar-brand { font-weight: 700; letter-spacing: 1px; }
+    .stat-card {
+      border-left: 4px solid;
+      transition: transform 0.15s;
+    }
+    .stat-card:hover { transform: translateY(-3px); }
+    .stat-card.blue   { border-color: #0d6efd; }
+    .stat-card.green  { border-color: #198754; }
+    .stat-card.orange { border-color: #fd7e14; }
+    .stat-card.purple { border-color: #6f42c1; }
+  </style>
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+  {% if role_name is defined and role_name %}
+  <!-- Authenticated layout -->
+  <div class="d-flex">
+    <!-- Sidebar -->
+    <div class="sidebar d-flex flex-column">
+      <div class="p-3 text-white text-center border-bottom border-secondary">
+        <h5 class="mb-0"><i class="bi bi-shield-lock"></i> SafeDocs</h5>
+        <small class="text-muted">Secure PDF Management</small>
+      </div>
+      <nav class="mt-2">
+        <a href="{{ url_for('dashboard') }}" class="{% if request.path == '/dashboard' %}active{% endif %}">
+          <i class="bi bi-speedometer2 me-2"></i>Dashboard
+        </a>
+        <a href="{{ url_for('portfolio') }}" class="{% if '/portfolio' in request.path %}active{% endif %}">
+          <i class="bi bi-person-badge me-2"></i>My Portfolio
+        </a>
+        <a href="{{ url_for('members_page') }}" class="{% if request.path == '/members' %}active{% endif %}">
+          <i class="bi bi-people me-2"></i>Members
+        </a>
+        <a href="{{ url_for('documents_page') }}" class="{% if '/documents' in request.path %}active{% endif %}">
+          <i class="bi bi-file-earmark-pdf me-2"></i>Documents
+        </a>
+      </nav>
+      <div class="mt-auto p-3 border-top border-secondary">
+        <small class="text-muted d-block">Logged in as</small>
+        <span class="text-white small">{{ user_name if user_name else role_name }}</span>
+        <br><span class="badge bg-secondary mt-1">{{ role_name }}</span>
+      </div>
+    </div>
+
+    <!-- Main content -->
+    <div class="content">
+      <!-- Top navbar -->
+      <nav class="navbar navbar-expand navbar-light bg-white shadow-sm px-4">
+        <span class="navbar-text ms-auto me-3">
+          {{ user_name if user_name else '' }}
+          <span class="badge bg-primary ms-1">{{ role_name }}</span>
+        </span>
+        <a href="{{ url_for('logout') }}" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-box-arrow-right"></i> Logout
+        </a>
+      </nav>
+
+      <!-- Flash messages -->
+      <div class="container-fluid px-4 mt-3">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+      </div>
+
+      <!-- Page content -->
+      <div class="container-fluid px-4 py-3">
+        {% block content %}{% endblock %}
+      </div>
+    </div>
+  </div>
+
+  {% else %}
+  <!-- Unauthenticated layout (login page, etc.) -->
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }} alert-dismissible fade show mt-3" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content_unauth %}{% endblock %}
+  </div>
+  {% endif %}
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

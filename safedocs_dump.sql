@@ -132,7 +132,6 @@ CREATE TABLE Document (
 -- Tracks version history for each document.
 -- ============================================================
 CREATE TABLE DocumentVersion (
-    VersionID       INT             PRIMARY KEY AUTO_INCREMENT,
     DocumentID      INT             NOT NULL,
     VersionNumber   INT             NOT NULL,
     FilePath        VARCHAR(500)    NOT NULL,
@@ -141,9 +140,9 @@ CREATE TABLE DocumentVersion (
     ChangeNote      VARCHAR(300),
     CreatedAt       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
+    PRIMARY KEY (DocumentID, VersionNumber),
     CONSTRAINT chk_ver_number CHECK (VersionNumber > 0),
     CONSTRAINT chk_ver_filesize CHECK (FileSize > 0),
-    CONSTRAINT uq_doc_version UNIQUE (DocumentID, VersionNumber),
     CONSTRAINT fk_ver_document FOREIGN KEY (DocumentID)
         REFERENCES Document(DocumentID)
         ON UPDATE CASCADE ON DELETE CASCADE,

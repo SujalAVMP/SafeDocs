@@ -1,6 +1,6 @@
 # SafeDocs -- Secure PDF Management System
 
-**CS 432 -- Databases | Assignment 1 | Track 1 | Statement 6**
+**CS 432 -- Databases | Track 1 | Statement 6**
 **Indian Institute of Technology, Gandhinagar | Semester II (2025--2026)**
 
 ## Team
@@ -15,7 +15,7 @@
 
 ## About
 
-SafeDocs is a secure PDF document management system designed for organisations that handle sensitive documents such as legal files, financial reports, academic records, and internal policies. It provides fine-grained access control, version tracking, audit logging, and secure sharing -- addressing the limitations of generic cloud storage platforms.
+SafeDocs is a secure PDF document management system designed for organisations that handle sensitive documents such as legal files, financial reports, academic records, and internal policies. It provides fine-grained access control, version tracking, audit logging, and secure sharing.
 
 ## Core Functionalities
 
@@ -25,6 +25,83 @@ SafeDocs is a secure PDF document management system designed for organisations t
 4. **Secure Document Sharing** -- Tokenised links with configurable expiry and download limits
 5. **Document Organisation & Search** -- Hierarchical folders, tags, and department-scoped organisation
 6. **Notification System** -- Alerts for shares, permission changes, version updates, and system events
+
+
+## Repository Structure
+
+```
+.
+├── README.md
+├── safedocs_dump.sql              # Full schema DDL + sample data (Assignment 1)
+├── er_diagram.md                  # Mermaid ER diagram (Assignment 1)
+├── Report_A1.pdf                  # Assignment report (UML, ER, schema details)
+├── Report_A2.pdf                  # Assignment 2 report (Module A + B details)
+│
+├── figures/                       # Benchmarking and design figures for reports
+├── Module_A/                      # Lightweight DBMS with B+ Tree Index
+│   ├── database/
+│   │   ├── __init__.py
+│   │   ├── bplustree.py           # B+ Tree implementation
+│   │   ├── bruteforce.py          # BruteForceDB baseline
+│   │   ├── table.py               # Typed relational Table
+│   │   └── db_manager.py          # Multi-database DatabaseManager
+│   ├── report.ipynb               # Benchmarks, visualizations, and report
+│   └── requirements.txt
+│
+├── Module_B/                      # Local API, RBAC, and Database Optimization
+│   ├── app/
+│   │   ├── app.py                 # Flask application (CRUD APIs + UI routes)
+│   │   ├── auth.py                # JWT auth, RBAC decorators, audit logging
+│   │   ├── __init__.py
+│   │   └── templates/             # HTML templates (login, dashboard, etc.)
+│   ├── sql/
+│   │   ├── setup.sql              # UserLogin, SecurityLog tables + indexes
+│   │   └── benchmark.sql          # EXPLAIN-based benchmark queries
+│   ├── logs/
+│   │   └── audit.log              # Security audit log file
+│   ├── report.ipynb               # Optimization report with benchmarks
+│   └── requirements.txt
+```
+
+
+## Setup
+
+### Prerequisites
+- Python 3.10+
+- MySQL 8.0+ or MariaDB 10.5+
+
+### Import the database
+```bash
+mysql -u root -p < safedocs_dump.sql
+```
+
+This creates the `safedocs` database, all 12 tables with constraints and indexes, and populates them with realistic sample data (10--20 rows per table).
+
+### Verify
+```bash
+mysql -u root -p safedocs -e "SELECT COUNT(*) AS table_count FROM information_schema.tables WHERE table_schema='safedocs';"
+```
+Expected output: `12`
+
+### Module A
+```bash
+cd Module_A
+pip install -r requirements.txt
+jupyter notebook report.ipynb
+```
+
+### Module B
+```bash
+# Import the base schema
+mysql -u root -p < safedocs_dump.sql
+# Run Module B setup (auth tables + indexes)
+mysql -u safedocs -psafedocs123 safedocs < Module_B/sql/setup.sql
+# Install dependencies
+cd Module_B
+pip install -r requirements.txt
+# Run the Flask app
+python -m app.app
+```
 
 ## Database Schema
 
@@ -45,37 +122,6 @@ The system uses **12 tables** across **7 entities**:
 | 11 | SharedLink | Secure external sharing links |
 | 12 | Notification | User alert messages |
 
-## ER Diagram
-
-See [er_diagram.md](er_diagram.md) for the full Mermaid ER diagram.
-
-## Repository Structure
-
-```
-.
-├── README.md              # This file
-├── safedocs_dump.sql      # Complete SQL dump (DDL + sample data)
-├── er_diagram.md          # Mermaid ER diagram
-└── Report.pdf             # Assignment report (UML, ER, schema details)
-```
-
-## Setup
-
-### Prerequisites
-- MySQL 8.0+ or MariaDB 10.5+
-
-### Import the database
-```bash
-mysql -u root -p < safedocs_dump.sql
-```
-
-This creates the `safedocs` database, all 12 tables with constraints and indexes, and populates them with realistic sample data (10--20 rows per table).
-
-### Verify
-```bash
-mysql -u root -p safedocs -e "SELECT COUNT(*) AS table_count FROM information_schema.tables WHERE table_schema='safedocs';"
-```
-Expected output: `12`
 
 ## Key Design Decisions
 
@@ -86,6 +132,8 @@ Expected output: `12`
 - **Restrict deletes** -- Members cannot be deleted if they have uploaded documents
 - **Logical constraints** -- Age >= 18, file size > 0, expiry > grant time, download count <= max
 
+
 ## Instructor
 
 Dr. Yogesh K. Meena
+

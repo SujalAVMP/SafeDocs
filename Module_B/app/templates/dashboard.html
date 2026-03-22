@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}SafeDocs - Dashboard{% endblock %}
+
+{% block content %}
+<h4 class="mb-4">Dashboard</h4>
+
+<!-- Stats cards -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card stat-card blue shadow-sm">
+      <div class="card-body">
+        <div class="d-flex justify-content-between">
+          <div>
+            <h6 class="text-muted mb-1">Members</h6>
+            <h3 class="fw-bold mb-0">{{ stats.total_members }}</h3>
+          </div>
+          <div class="align-self-center">
+            <i class="bi bi-people fs-1 text-primary opacity-50"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card green shadow-sm">
+      <div class="card-body">
+        <div class="d-flex justify-content-between">
+          <div>
+            <h6 class="text-muted mb-1">Documents</h6>
+            <h3 class="fw-bold mb-0">{{ stats.total_documents }}</h3>
+          </div>
+          <div class="align-self-center">
+            <i class="bi bi-file-earmark-pdf fs-1 text-success opacity-50"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card orange shadow-sm">
+      <div class="card-body">
+        <div class="d-flex justify-content-between">
+          <div>
+            <h6 class="text-muted mb-1">Folders</h6>
+            <h3 class="fw-bold mb-0">{{ stats.total_folders }}</h3>
+          </div>
+          <div class="align-self-center">
+            <i class="bi bi-folder fs-1 text-warning opacity-50"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card stat-card purple shadow-sm">
+      <div class="card-body">
+        <div class="d-flex justify-content-between">
+          <div>
+            <h6 class="text-muted mb-1">Departments</h6>
+            <h3 class="fw-bold mb-0">{{ stats.total_departments }}</h3>
+          </div>
+          <div class="align-self-center">
+            <i class="bi bi-building fs-1 text-purple opacity-50" style="color: #6f42c1 !important;"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Quick links -->
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white"><strong>Quick Actions</strong></div>
+      <div class="card-body">
+        <a href="{{ url_for('portfolio') }}" class="btn btn-outline-primary btn-sm me-2 mb-2">
+          <i class="bi bi-person-badge"></i> My Portfolio
+        </a>
+        <a href="{{ url_for('members_page') }}" class="btn btn-outline-secondary btn-sm me-2 mb-2">
+          <i class="bi bi-people"></i> View Members
+        </a>
+        <a href="{{ url_for('documents_page') }}" class="btn btn-outline-success btn-sm me-2 mb-2">
+          <i class="bi bi-file-earmark-pdf"></i> Documents
+        </a>
+        {% if role_id in [1, 2, 3] %}
+        <a href="{{ url_for('document_new_page') }}" class="btn btn-outline-info btn-sm me-2 mb-2">
+          <i class="bi bi-plus-circle"></i> New Document
+        </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white"><strong>Role Permissions</strong></div>
+      <div class="card-body">
+        <p class="mb-1">Your role: <span class="badge bg-primary">{{ role_name }}</span></p>
+        <small class="text-muted">
+          {% if role_id == 1 %}
+            Full system administrator -- all permissions granted.
+          {% elif role_id == 2 %}
+            Manager -- upload, delete, share, and view all members.
+          {% elif role_id == 3 %}
+            Editor -- upload and edit documents.
+          {% elif role_id == 4 %}
+            Viewer -- read-only access to permitted documents.
+          {% elif role_id == 5 %}
+            Auditor -- read-only access with security log visibility.
+          {% endif %}
+        </small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent activity -->
+<div class="card shadow-sm">
+  <div class="card-header bg-white"><strong>Recent Activity</strong></div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Action</th>
+            <th>Member</th>
+            <th>Document</th>
+            <th>Timestamp</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for log in stats.recent_logs %}
+          <tr>
+            <td>
+              <span class="badge
+                {% if log.Action == 'VIEW' %}bg-info
+                {% elif log.Action == 'UPLOAD' %}bg-success
+                {% elif log.Action == 'EDIT' %}bg-warning text-dark
+                {% elif log.Action == 'DELETE' %}bg-danger
+                {% elif log.Action == 'DOWNLOAD' %}bg-secondary
+                {% elif log.Action == 'SHARE' %}bg-primary
+                {% else %}bg-dark{% endif %}">
+                {{ log.Action }}
+              </span>
+            </td>
+            <td>{{ log.Name }}</td>
+            <td>{{ log.Title }}</td>
+            <td>{{ log.AccessTimestamp.strftime('%Y-%m-%d %H:%M') if log.AccessTimestamp else '' }}</td>
+          </tr>
+          {% endfor %}
+          {% if not stats.recent_logs %}
+          <tr><td colspan="4" class="text-center text-muted py-3">No recent activity</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
