@@ -772,7 +772,13 @@ def api_update_document(doc_id):
 
         vals.append(doc_id)
         with db.cursor() as cur:
-            cur.execute(f"UPDATE Document SET {', '.join(sets)} WHERE DocumentID = %s", vals)
+            cur.execute(
+                f"UPDATE Document SET {', '.join(sets)} WHERE DocumentID = %s AND IsActive = TRUE",
+                vals,
+            )
+            if cur.rowcount == 0:
+                db.rollback()
+                return jsonify({"error": "Document not found"}), 404
         _record_document_activity(db, doc_id, "EDIT")
         db.commit()
         log_action(db, g.member_id, "API_UPDATE_DOCUMENT", "Document", doc_id,
@@ -798,13 +804,12 @@ def api_delete_document(doc_id):
 
         with db.cursor() as cur:
             cur.execute(
-                "SELECT DocumentID, IsActive FROM Document WHERE DocumentID = %s",
+                "UPDATE Document SET IsActive = FALSE WHERE DocumentID = %s AND IsActive = TRUE",
                 (doc_id,),
             )
-            doc = cur.fetchone()
-            if not doc or not doc["IsActive"]:
+            if cur.rowcount == 0:
+                db.rollback()
                 return jsonify({"error": "Document not found"}), 404
-            cur.execute("UPDATE Document SET IsActive = FALSE WHERE DocumentID = %s", (doc_id,))
         _record_document_activity(db, doc_id, "DELETE")
         db.commit()
         log_action(db, g.member_id, "API_DELETE_DOCUMENT", "Document", doc_id,

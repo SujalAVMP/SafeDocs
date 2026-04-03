@@ -8,6 +8,8 @@ list (next pointers) to allow efficient sequential and range scans.
 CS 432 - Databases | IIT Gandhinagar | Assignment 2 - Module A
 """
 
+import copy
+
 try:
     from graphviz import Digraph
 except ImportError:
@@ -409,6 +411,37 @@ class BPlusTree:
     def sum_keys(self):
         """Return the sum of all keys in the tree."""
         return sum(k for k, _ in self.get_all())
+
+    # ------------------------------------------------------------------
+    # Persistence / cloning
+    # ------------------------------------------------------------------
+
+    def to_dict(self):
+        """
+        Serialize the tree as sorted key-value pairs.
+
+        The B+ Tree remains the authoritative storage structure in memory; this
+        representation is only used to clone or persist committed state.
+        """
+        return {
+            "order": self.order,
+            "records": [
+                {"key": copy.deepcopy(key), "value": copy.deepcopy(value)}
+                for key, value in self.get_all()
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, payload):
+        """Rebuild a B+ Tree from a serialized representation."""
+        tree = cls(order=payload["order"])
+        for row in payload.get("records", []):
+            tree.insert(copy.deepcopy(row["key"]), copy.deepcopy(row["value"]))
+        return tree
+
+    def clone(self):
+        """Return a deep logical copy of the tree."""
+        return self.from_dict(self.to_dict())
 
     # ------------------------------------------------------------------
     # Visualization (Graphviz)

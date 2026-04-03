@@ -6,6 +6,8 @@ for DDL (create/drop database/table) and delegates DML to individual tables.
 CS 432 - Databases | IIT Gandhinagar | Assignment 2 - Module A
 """
 
+import copy
+
 from .table import Table
 
 
@@ -116,3 +118,34 @@ class DatabaseManager:
 
     def __repr__(self):
         return f"DatabaseManager(databases={self.list_databases()})"
+
+    # ------------------------------------------------------------------
+    # Persistence / cloning
+    # ------------------------------------------------------------------
+
+    def to_dict(self):
+        """Serialize every database and table managed by this instance."""
+        return {
+            "databases": {
+                db_name: {
+                    table_name: table.to_dict()
+                    for table_name, table in tables.items()
+                }
+                for db_name, tables in self.databases.items()
+            }
+        }
+
+    @classmethod
+    def from_dict(cls, payload):
+        """Rebuild a DatabaseManager from serialized databases/tables."""
+        manager = cls()
+        for db_name, tables in payload.get("databases", {}).items():
+            manager.databases[db_name] = {}
+            for table_name, table_payload in tables.items():
+                rebuilt = Table.from_dict(copy.deepcopy(table_payload))
+                manager.databases[db_name][table_name] = rebuilt
+        return manager
+
+    def clone(self):
+        """Return a deep logical copy of the manager and all tables."""
+        return self.from_dict(self.to_dict())

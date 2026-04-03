@@ -39,12 +39,15 @@ SafeDocs is a secure PDF document management system designed for organisations t
 │
 ├── figures/                       # Benchmarking and design figures for reports
 ├── Module_A/                      # Lightweight DBMS with B+ Tree Index
+│   ├── assignment3_demo.py        # ACID, recovery, and isolation demo runner
 │   ├── database/
 │   │   ├── __init__.py
 │   │   ├── bplustree.py           # B+ Tree implementation
 │   │   ├── bruteforce.py          # BruteForceDB baseline
 │   │   ├── table.py               # Typed relational Table
-│   │   └── db_manager.py          # Multi-database DatabaseManager
+│   │   ├── db_manager.py          # Multi-database DatabaseManager
+│   │   ├── persistence.py         # Snapshot + journal durability helpers
+│   │   └── transaction_manager.py # BEGIN / COMMIT / ROLLBACK coordinator
 │   ├── report.ipynb               # Benchmarks, visualizations, and report
 │   └── requirements.txt
 │
@@ -59,6 +62,8 @@ SafeDocs is a secure PDF document management system designed for organisations t
 │   │   └── benchmark.sql          # EXPLAIN-based benchmark queries
 │   ├── logs/
 │   │   └── audit.log              # Security audit log file
+│   ├── stress/
+│   │   └── assignment3_stress.py  # Concurrency, rollback, and load harness
 │   ├── report.ipynb               # Optimization report with benchmarks
 │   └── requirements.txt
 ```
@@ -90,6 +95,20 @@ pip install -r requirements.txt
 jupyter notebook report.ipynb
 ```
 
+### Module A Assignment 3 Demo
+```bash
+cd Module_A
+python3 assignment3_demo.py
+```
+
+This runs a three-table transactional scenario over B+ Tree-backed relations and verifies:
+- atomic rollback after injected failure
+- consistency checks for invalid transactions
+- serialized isolation under concurrent buyers
+- durability after restart
+- recovery of incomplete transactions
+- recovery from a journaled commit when checkpointing is interrupted
+
 ### Module B
 ```bash
 # Import the base schema
@@ -99,9 +118,22 @@ mysql -u safedocs -psafedocs123 safedocs < Module_B/sql/setup.sql
 # Install dependencies
 cd Module_B
 pip install -r requirements.txt
-# Run the Flask app
+# Run the Flask app from inside Module_B
 python -m app.app
 ```
+
+### Module B Assignment 3 Stress Test
+Start the Flask app first, then run the stress harness in a second terminal:
+
+```bash
+cd Module_B
+python3 stress/assignment3_stress.py
+```
+
+The harness checks:
+- rollback integrity on a failed multi-step member creation request
+- concurrent soft-delete safety on the same document
+- mixed read-heavy API load across hundreds of requests with latency summaries
 
 ## Database Schema
 
@@ -136,4 +168,3 @@ The system uses **12 tables** across **7 entities**:
 ## Instructor
 
 Dr. Yogesh K. Meena
-

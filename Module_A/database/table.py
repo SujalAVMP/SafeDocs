@@ -8,7 +8,19 @@ designated search_key column used for B+ Tree indexing.  Methods follow the
 CS 432 - Databases | IIT Gandhinagar | Assignment 2 - Module A
 """
 
+import copy
+
 from .bplustree import BPlusTree
+
+
+TYPE_NAME_MAP = {
+    int: "int",
+    float: "float",
+    str: "str",
+    bool: "bool",
+}
+
+NAME_TYPE_MAP = {name: dtype for dtype, name in TYPE_NAME_MAP.items()}
 
 
 class Table:
@@ -59,6 +71,26 @@ class Table:
                         f"expected {dtype.__name__}, got {type(record[col]).__name__}"
                     )
         return True, "Valid"
+
+    @staticmethod
+    def _serialize_schema(schema):
+        """Convert Python types to stable string names for persistence."""
+        serialized = {}
+        for column, dtype in schema.items():
+            if dtype not in TYPE_NAME_MAP:
+                raise ValueError(f"Unsupported schema type for persistence: {dtype!r}")
+            serialized[column] = TYPE_NAME_MAP[dtype]
+        return serialized
+
+    @staticmethod
+    def _deserialize_schema(schema_payload):
+        """Convert persisted schema type names back to Python types."""
+        schema = {}
+        for column, dtype_name in schema_payload.items():
+            if dtype_name not in NAME_TYPE_MAP:
+                raise ValueError(f"Unsupported persisted schema type: {dtype_name!r}")
+            schema[column] = NAME_TYPE_MAP[dtype_name]
+        return schema
 
     # ------------------------------------------------------------------
     # CRUD
@@ -200,3 +232,37 @@ class Table:
 
     def __repr__(self):
         return f"Table(name='{self.name}', rows={len(self)})"
+
+    # ------------------------------------------------------------------
+    # Persistence / cloning
+    # ------------------------------------------------------------------
+
+    def to_dict(self):
+        """Serialize the table using the B+ Tree contents as the source of truth."""
+        return {
+            "name": self.name,
+            "schema": self._serialize_schema(self.schema),
+            "order": self.order,
+            "search_key": self.search_key,
+            "records": [
+                {"key": copy.deepcopy(key), "record": copy.deepcopy(record)}
+                for key, record in self.get_all()
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, payload):
+        """Rebuild a table from a serialized payload."""
+        table = cls(
+            name=payload["name"],
+            schema=cls._deserialize_schema(payload["schema"]),
+            order=payload.get("order", 8),
+            search_key=payload.get("search_key"),
+        )
+        for row in payload.get("records", []):
+            table.insert(copy.deepcopy(row["record"]))
+        return table
+
+    def clone(self):
+        """Return a deep logical copy of the table."""
+        return self.from_dict(self.to_dict())
