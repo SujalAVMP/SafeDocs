@@ -1,0 +1,416 @@
+{% extends "base.html" %}
+{% block title %}SafeDocs - Assignment 3 Test Console{% endblock %}
+
+{% block extra_css %}
+<style>
+  .test-console-card {
+    border: 0;
+    overflow: hidden;
+  }
+  .test-console-card .card-header {
+    background: linear-gradient(135deg, #f8fafc, #eef4ff);
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border-radius: 999px;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .status-idle { background: #eef2f7; color: #475569; }
+  .status-running { background: #fff4db; color: #9a6700; }
+  .status-passed { background: #dcfce7; color: #166534; }
+  .status-failed { background: #fee2e2; color: #991b1b; }
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.75rem;
+  }
+  .meta-tile {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.85rem;
+    padding: 0.85rem 1rem;
+  }
+  .meta-tile small {
+    display: block;
+    color: #64748b;
+    margin-bottom: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .scenario-list {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+  }
+  .scenario-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.85rem;
+    padding: 0.8rem 0.95rem;
+    margin-bottom: 0.6rem;
+    background: #fff;
+  }
+  .scenario-list li:last-child {
+    margin-bottom: 0;
+  }
+  .log-panel {
+    background: #0f172a;
+    color: #dbeafe;
+    border-radius: 0.85rem;
+    min-height: 280px;
+    max-height: 420px;
+    overflow: auto;
+    padding: 1rem;
+    font-size: 0.84rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border: 1px solid #0b1220;
+  }
+  .muted-note {
+    color: #64748b;
+    font-size: 0.9rem;
+  }
+  .summary-banner {
+    background: linear-gradient(135deg, #0f172a, #1d4ed8);
+    color: #fff;
+    border-radius: 1rem;
+    padding: 1.2rem 1.25rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+  <div>
+    <h4 class="mb-1">Assignment 3 Test Console</h4>
+    <p class="text-muted mb-0">
+      Run the existing verification scripts for Module A and Module B, then watch live logs and scenario states update on this page.
+    </p>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <span id="runAllBadge" class="status-pill status-idle">Idle</span>
+    <button id="runAllButton" class="btn btn-primary btn-sm" {% if not permissions.can_run_all %}disabled{% endif %}>
+      <i class="bi bi-play-circle me-1"></i>Run All
+    </button>
+  </div>
+</div>
+
+<div id="consoleAlert" class="mb-3"></div>
+
+<div class="summary-banner shadow-sm mb-4">
+  <div class="row g-3 align-items-center">
+    <div class="col-12">
+      <h5 class="mb-1">Combined Assignment 3 Run</h5>
+      <p class="mb-0 text-white-50">
+        Admin users can run both modules sequentially. Auditors can view the latest overall result and inspect the live output.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="card test-console-card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <strong>Run All Orchestrator</strong>
+      <div class="muted-note">This sequence runs Module A first and Module B second.</div>
+    </div>
+    <span id="runAllExit" class="badge text-bg-secondary">Exit: -</span>
+  </div>
+  <div class="card-body">
+    <div class="row g-4">
+      <div class="col-lg-5">
+        <h6 class="mb-3">Overall Progress</h6>
+        <ul id="runAllScenarios" class="scenario-list"></ul>
+      </div>
+      <div class="col-lg-7">
+        <h6 class="mb-3">Run All Log</h6>
+        <pre id="runAllLogs" class="log-panel">No run started yet.</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-6">
+    <div class="card test-console-card shadow-sm h-100">
+      <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <strong>Module A Verification</strong>
+          <div class="muted-note">Custom transaction engine, rollback, durability, and recovery checks.</div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <span id="moduleABadge" class="status-pill status-idle">Idle</span>
+          <button id="moduleAButton" class="btn btn-outline-primary btn-sm" {% if not permissions.can_run_module_a %}disabled{% endif %}>
+            <i class="bi bi-play-circle me-1"></i>Run Module A
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="meta-grid mb-4">
+          <div class="meta-tile">
+            <small>Exit Code</small>
+            <div id="moduleAExit">-</div>
+          </div>
+        </div>
+        <div class="row g-4">
+          <div class="col-lg-5">
+            <h6 class="mb-3">Scenario Checklist</h6>
+            <ul id="moduleAScenarios" class="scenario-list"></ul>
+          </div>
+          <div class="col-lg-7">
+            <h6 class="mb-3">Live Log</h6>
+            <pre id="moduleALogs" class="log-panel">No Module A run started yet.</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="card test-console-card shadow-sm h-100">
+      <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <strong>Module B Stress Test</strong>
+          <div class="muted-note">Rollback integrity, delete race handling, and mixed-load verification.</div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <span id="moduleBBadge" class="status-pill status-idle">Idle</span>
+          <button id="moduleBButton" class="btn btn-outline-primary btn-sm" {% if not permissions.can_run_module_b %}disabled{% endif %}>
+            <i class="bi bi-play-circle me-1"></i>Run Module B
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="meta-grid mb-2">
+          <div class="meta-tile">
+            <small>Exit Code</small>
+            <div id="moduleBExit">-</div>
+          </div>
+        </div>
+        {% if not permissions.can_run_module_b %}
+        <p class="muted-note mb-4">Only Admin users can execute Module B from this page. Auditors can still inspect the latest result and logs.</p>
+        {% else %}
+        <div class="mb-4"></div>
+        {% endif %}
+        <div class="row g-4">
+          <div class="col-lg-5">
+            <h6 class="mb-3">Scenario Checklist</h6>
+            <ul id="moduleBScenarios" class="scenario-list"></ul>
+          </div>
+          <div class="col-lg-7">
+            <h6 class="mb-3">Live Log</h6>
+            <pre id="moduleBLogs" class="log-panel">No Module B run started yet.</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const initialState = {
+  jobs: {{ assignment3_jobs | tojson }},
+  permissions: {{ permissions | tojson }}
+};
+
+const scenarioOrder = {
+  run_all: ["Module A", "Module B"],
+  module_a: [
+    "Atomicity",
+    "Consistency",
+    "Isolation",
+    "Durability",
+    "Recovery - Incomplete Transaction",
+    "Recovery - Journal Replay"
+  ],
+  module_b: ["rollback_integrity", "delete_race", "mixed_load"]
+};
+
+const scenarioLabels = {
+  "Module A": "Module A",
+  "Module B": "Module B",
+  "Atomicity": "Atomicity",
+  "Consistency": "Consistency",
+  "Isolation": "Isolation",
+  "Durability": "Durability",
+  "Recovery - Incomplete Transaction": "Recovery - Incomplete Transaction",
+  "Recovery - Journal Replay": "Recovery - Journal Replay",
+  "rollback_integrity": "rollback_integrity",
+  "delete_race": "delete_race",
+  "mixed_load": "mixed_load"
+};
+
+const endpoints = {
+  status: "{{ url_for('api_assignment3_tests_status') }}",
+  runAll: "{{ url_for('api_assignment3_run_all') }}",
+  moduleA: "{{ url_for('api_assignment3_run_module_a') }}",
+  moduleB: "{{ url_for('api_assignment3_run_module_b') }}"
+};
+
+let latestState = initialState;
+let pollTimer = null;
+
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function statusClass(status) {
+  return `status-pill status-${status || 'idle'}`;
+}
+
+function statusLabel(status) {
+  if (!status) return "Idle";
+  return status.replace("_", " ").replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function badgeClass(status) {
+  return {
+    idle: "text-bg-secondary",
+    running: "text-bg-warning",
+    passed: "text-bg-success",
+    failed: "text-bg-danger"
+  }[status || "idle"];
+}
+
+function formatDate(value) {
+  if (!value) return "Not run yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function setAlert(message, type = "warning") {
+  const alert = document.getElementById("consoleAlert");
+  alert.innerHTML = `
+    <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+      ${escapeHtml(message)}
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+  `;
+}
+
+function clearAlert() {
+  document.getElementById("consoleAlert").innerHTML = "";
+}
+
+function renderBadge(elementId, status) {
+  const badge = document.getElementById(elementId);
+  badge.className = statusClass(status);
+  badge.textContent = statusLabel(status);
+}
+
+function renderLogs(elementId, lines, emptyMessage) {
+  const panel = document.getElementById(elementId);
+  const shouldStick = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 40;
+  panel.textContent = lines.length ? lines.join("\n") : emptyMessage;
+  if (shouldStick) {
+    panel.scrollTop = panel.scrollHeight;
+  }
+}
+
+function renderScenarioList(elementId, jobName, job) {
+  const list = document.getElementById(elementId);
+  const html = scenarioOrder[jobName].map(name => {
+    const status = (job.scenario_results && job.scenario_results[name]) || "pending";
+    return `
+      <li>
+        <span>${escapeHtml(scenarioLabels[name] || name)}</span>
+        <span class="badge ${badgeClass(status)}">${escapeHtml(statusLabel(status))}</span>
+      </li>
+    `;
+  }).join("");
+  list.innerHTML = html;
+}
+
+function renderRunAll(job) {
+  renderBadge("runAllBadge", job.status);
+  document.getElementById("runAllExit").className = `badge ${badgeClass(job.status)}`;
+  document.getElementById("runAllExit").textContent = `Exit: ${job.exit_code === null ? "-" : job.exit_code}`;
+  renderScenarioList("runAllScenarios", "run_all", job);
+  renderLogs("runAllLogs", job.logs || [], "No run started yet.");
+}
+
+function renderModule(prefix, jobName, job) {
+  renderBadge(`${prefix}Badge`, job.status);
+  document.getElementById(`${prefix}Exit`).textContent = job.exit_code === null ? "-" : job.exit_code;
+  renderScenarioList(`${prefix}Scenarios`, jobName, job);
+  renderLogs(`${prefix}Logs`, job.logs || [], `No ${scenarioLabels[jobName] || jobName} run started yet.`);
+}
+
+function syncButtons(jobs, permissions) {
+  const runAllBusy = jobs.run_all.status === "running";
+  document.getElementById("runAllButton").disabled = !permissions.can_run_all || runAllBusy || jobs.module_a.status === "running" || jobs.module_b.status === "running";
+  document.getElementById("moduleAButton").disabled = !permissions.can_run_module_a || runAllBusy || jobs.module_a.status === "running";
+  document.getElementById("moduleBButton").disabled = !permissions.can_run_module_b || runAllBusy || jobs.module_b.status === "running";
+}
+
+function renderState(state) {
+  latestState = state;
+  renderRunAll(state.jobs.run_all);
+  renderModule("moduleA", "module_a", state.jobs.module_a);
+  renderModule("moduleB", "module_b", state.jobs.module_b);
+  syncButtons(state.jobs, state.permissions);
+  schedulePoll();
+}
+
+async function fetchState() {
+  try {
+    const response = await fetch(endpoints.status, { headers: { "Accept": "application/json" } });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to fetch Assignment 3 status.");
+    }
+    renderState(data);
+  } catch (error) {
+    setAlert(error.message || "Unable to fetch Assignment 3 status.", "danger");
+  }
+}
+
+async function triggerRun(endpoint) {
+  clearAlert();
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Accept": "application/json" }
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || data.message || "Unable to start the requested run.");
+    }
+    renderState(data);
+    setAlert(data.message || "Run started.", "info");
+  } catch (error) {
+    setAlert(error.message || "Unable to start the requested run.", "danger");
+  }
+}
+
+function schedulePoll() {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+  }
+  const jobs = latestState.jobs;
+  const anyRunning = Object.values(jobs).some(job => job.status === "running");
+  pollTimer = setTimeout(fetchState, anyRunning ? 1000 : 5000);
+}
+
+document.getElementById("runAllButton").addEventListener("click", () => triggerRun(endpoints.runAll));
+document.getElementById("moduleAButton").addEventListener("click", () => triggerRun(endpoints.moduleA));
+document.getElementById("moduleBButton").addEventListener("click", () => triggerRun(endpoints.moduleB));
+
+renderState(initialState);
+</script>
+{% endblock %}

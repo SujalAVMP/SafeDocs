@@ -13,6 +13,7 @@ Features:
 
 import os
 import datetime
+from pathlib import Path
 
 import pymysql
 from flask import (
@@ -33,11 +34,19 @@ except ImportError:
         login_required, admin_required, log_action, log_document_activity,
     )
 
+try:
+    from .assignment3_console import Assignment3Console
+except ImportError:
+    from assignment3_console import Assignment3Console
+
 # ===================================================================
 # Flask app setup
 # ===================================================================
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "safedocs-flask-secret-cs432")
+MODULE_B_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = MODULE_B_DIR.parent
+ASSIGNMENT3_CONSOLE = Assignment3Console(REPO_ROOT, MODULE_B_DIR)
 
 # ===================================================================
 # Database connection helper
@@ -81,6 +90,28 @@ def _record_document_activity(db, document_id, action):
         user_agent=request.headers.get("User-Agent"),
         commit=False,
     )
+
+
+def _assignment3_permissions():
+    return {
+        "can_view": g.role_id in (1, 5),
+        "can_run_module_a": g.role_id in (1, 5),
+        "can_run_module_b": g.role_id == 1,
+        "can_run_all": g.role_id == 1,
+    }
+
+
+def _assignment3_access_denied():
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Access denied"}), 403
+    flash("Only Admin and Auditor users can access the Assignment 3 console.", "warning")
+    return redirect(url_for("dashboard"))
+
+
+def _require_assignment3_view_access():
+    if not _assignment3_permissions()["can_view"]:
+        return _assignment3_access_denied()
+    return None
 
 # ===================================================================
 # AUTH ROUTES
@@ -422,6 +453,99 @@ def document_edit_page(doc_id):
                                role_id=g.role_id, member_id=g.member_id)
     finally:
         db.close()
+
+# ===================================================================
+# ASSIGNMENT 3 VISUAL TEST CONSOLE
+# ===================================================================
+
+
+@app.route("/assignment3/tests")
+@login_required
+def assignment3_tests_page():
+    access_response = _require_assignment3_view_access()
+    if access_response:
+        return access_response
+
+    permissions = _assignment3_permissions()
+    return render_template(
+        "assignment3_tests.html",
+        user_name=g.member_name,
+        role_name=g.role_name,
+        role_id=g.role_id,
+        member_id=g.member_id,
+        permissions=permissions,
+        assignment3_jobs=ASSIGNMENT3_CONSOLE.snapshot(),
+    )
+
+
+@app.route("/api/assignment3/tests/status", methods=["GET"])
+@login_required
+def api_assignment3_tests_status():
+    access_response = _require_assignment3_view_access()
+    if access_response:
+        return access_response
+
+    return jsonify({
+        "jobs": ASSIGNMENT3_CONSOLE.snapshot(),
+        "permissions": _assignment3_permissions(),
+    })
+
+
+@app.route("/api/assignment3/tests/run/module-a", methods=["POST"])
+@login_required
+def api_assignment3_run_module_a():
+    access_response = _require_assignment3_view_access()
+    if access_response:
+        return access_response
+
+    permissions = _assignment3_permissions()
+    if not permissions["can_run_module_a"]:
+        return jsonify({"error": "You do not have permission to run Module A."}), 403
+
+    started, message, jobs = ASSIGNMENT3_CONSOLE.start_module_a(g.role_name)
+    return jsonify({
+        "message": message,
+        "jobs": jobs,
+        "permissions": permissions,
+    }), 202 if started else 409
+
+
+@app.route("/api/assignment3/tests/run/module-b", methods=["POST"])
+@login_required
+def api_assignment3_run_module_b():
+    access_response = _require_assignment3_view_access()
+    if access_response:
+        return access_response
+
+    permissions = _assignment3_permissions()
+    if not permissions["can_run_module_b"]:
+        return jsonify({"error": "Only Admin users can run Module B from the visual console."}), 403
+
+    started, message, jobs = ASSIGNMENT3_CONSOLE.start_module_b(g.role_name)
+    return jsonify({
+        "message": message,
+        "jobs": jobs,
+        "permissions": permissions,
+    }), 202 if started else 409
+
+
+@app.route("/api/assignment3/tests/run/all", methods=["POST"])
+@login_required
+def api_assignment3_run_all():
+    access_response = _require_assignment3_view_access()
+    if access_response:
+        return access_response
+
+    permissions = _assignment3_permissions()
+    if not permissions["can_run_all"]:
+        return jsonify({"error": "Only Admin users can run all Assignment 3 checks together."}), 403
+
+    started, message, jobs = ASSIGNMENT3_CONSOLE.start_run_all(g.role_name)
+    return jsonify({
+        "message": message,
+        "jobs": jobs,
+        "permissions": permissions,
+    }), 202 if started else 409
 
 # ===================================================================
 # CRUD API - MEMBERS

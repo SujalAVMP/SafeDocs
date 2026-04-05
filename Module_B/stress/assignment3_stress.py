@@ -26,6 +26,11 @@ class ApiError(RuntimeError):
     """Raised when the local SafeDocs API cannot be reached or parsed."""
 
 
+def log_step(message):
+    """Print a single human-readable progress line."""
+    print(f"    - {message}")
+
+
 def api_request(method, path, token=None, payload=None, query=None):
     """Perform a JSON API request and return status, body, and elapsed time."""
     url = f"{BASE_URL}{path}"
@@ -117,8 +122,10 @@ def rollback_scenario(admin_token):
     existing 'admin' username causes the second insert to fail, which should
     rollback the first insert and leave no partial member row behind.
     """
+    print("\n[Rollback Integrity] Preparing duplicate-username rollback scenario.")
     unique_name = f"RollbackCandidate_{int(time.time() * 1000)}"
     unique_email = f"{unique_name.lower()}@example.com"
+    log_step(f"Generated temporary member identity: name={unique_name}, email={unique_email}.")
 
     before_status, before_body, _ = api_request(
         "GET",
@@ -128,6 +135,7 @@ def rollback_scenario(admin_token):
     )
     if before_status != 200 or before_body != []:
         raise ApiError(f"Unexpected precondition for rollback test: {before_status}, {before_body}")
+    log_step("Pre-check complete: no matching member exists before the create request.")
 
     status, body, elapsed_ms = api_request(
         "POST",
@@ -144,12 +152,21 @@ def rollback_scenario(admin_token):
             "Age": 28,
         },
     )
+    log_step(
+        f"Create request completed in {round(elapsed_ms, 2)} ms with status={status} "
+        "after reusing the existing username 'admin'."
+    )
+    if isinstance(body, dict) and body.get("error"):
+        log_step(f"API reported: {body['error']}.")
 
     after_status, after_body, _ = api_request(
         "GET",
         "/api/members",
         token=admin_token,
         query={"name": unique_name},
+    )
+    log_step(
+        f"Post-check complete: matching members after rollback={len(after_body) if isinstance(after_body, list) else 'n/a'}."
     )
 
     success = status == 409 and after_status == 200 and after_body == []
@@ -171,11 +188,15 @@ def delete_race_scenario(admin_token, folder_id, workers=8):
     - exactly one request succeeds with 200
     - the remaining requests observe the already-deleted document and fail cleanly
     """
+    print("\n[Delete Race] Preparing concurrent delete scenario.")
+    log_step(f"Creating a temporary document in folder {folder_id} for the delete race.")
     document_id = create_temp_document(
         admin_token,
         folder_id,
         title=f"RaceDelete_{int(time.time() * 1000)}",
     )
+    log_step(f"Temporary document created with DocumentID={document_id}.")
+    log_step(f"Launching {workers} concurrent delete requests against the same document.")
 
     def delete_once():
         status, body, elapsed_ms = api_request(
@@ -200,6 +221,11 @@ def delete_race_scenario(admin_token, folder_id, workers=8):
     success_count = sum(1 for item in results if item["status"] == 200)
     not_found_count = sum(1 for item in results if item["status"] == 404)
     success = success_count == 1 and success_count + not_found_count == len(results) and final_status == 404
+    log_step(
+        f"Delete race finished: 200 responses={success_count}, 404 responses={not_found_count}, "
+        f"other responses={len(results) - success_count - not_found_count}."
+    )
+    log_step(f"Final GET returned status={final_status}, confirming the document is no longer active.")
 
     return {
         "name": "delete_race",
@@ -222,6 +248,7 @@ def load_scenario(admin_token, viewer_token, total_requests=240, workers=24):
     The mix intentionally leans read-heavy so the test can scale to hundreds of
     requests without filling the database with temporary rows.
     """
+    print("\n[Mixed Load] Preparing read-heavy API load scenario.")
     request_plan = []
     for i in range(total_requests):
         mod = i % 4
@@ -233,6 +260,11 @@ def load_scenario(admin_token, viewer_token, total_requests=240, workers=24):
             request_plan.append(("GET", "/api/folders", viewer_token, None))
         else:
             request_plan.append(("GET", "/api/security-logs", admin_token, {"session_valid": "true"}))
+    log_step(
+        f"Prepared {total_requests} total requests across {workers} workers "
+        "with a repeated mix of documents, members, folders, and security logs."
+    )
+    log_step("Starting concurrent load execution.")
 
     latencies = []
     statuses = {}
@@ -252,6 +284,16 @@ def load_scenario(admin_token, viewer_token, total_requests=240, workers=24):
             if status >= 500:
                 failures.append({"status": status, "body": body})
     wall_clock_ms = (time.perf_counter() - started) * 1000
+    average_latency_ms = round(statistics.mean(latencies), 2)
+    median_latency_ms = round(statistics.median(latencies), 2)
+    p95_latency_ms = round(percentile(latencies, 95), 2)
+    max_latency_ms = round(max(latencies), 2)
+    log_step(f"Load execution finished with status breakdown={statuses} and server_failures={len(failures)}.")
+    log_step(
+        "Latency summary: "
+        f"avg={average_latency_ms} ms, median={median_latency_ms} ms, "
+        f"p95={p95_latency_ms} ms, max={max_latency_ms} ms, wall_clock={round(wall_clock_ms, 2)} ms."
+    )
 
     return {
         "name": "mixed_load",
@@ -259,10 +301,10 @@ def load_scenario(admin_token, viewer_token, total_requests=240, workers=24):
         "total_requests": total_requests,
         "workers": workers,
         "status_breakdown": statuses,
-        "average_latency_ms": round(statistics.mean(latencies), 2),
-        "median_latency_ms": round(statistics.median(latencies), 2),
-        "p95_latency_ms": round(percentile(latencies, 95), 2),
-        "max_latency_ms": round(max(latencies), 2),
+        "average_latency_ms": average_latency_ms,
+        "median_latency_ms": median_latency_ms,
+        "p95_latency_ms": p95_latency_ms,
+        "max_latency_ms": max_latency_ms,
         "wall_clock_ms": round(wall_clock_ms, 2),
         "server_failures": failures,
     }
@@ -277,19 +319,26 @@ def print_result(result):
 def main():
     print(f"SafeDocs Assignment 3 stress harness")
     print(f"Target base URL: {BASE_URL}")
-
+    log_step("Authenticating admin user.")
     admin_token = login("admin", "admin123")
+    log_step("Admin session token acquired.")
+    log_step("Authenticating viewer user.")
     viewer_token = login("priya", "priya123")
+    log_step("Viewer session token acquired.")
+    log_step("Fetching an active folder for document scenarios.")
     folder_id = fetch_first_folder_id(admin_token)
-
-    results = [
-        rollback_scenario(admin_token),
-        delete_race_scenario(admin_token, folder_id),
-        load_scenario(admin_token, viewer_token),
-    ]
+    log_step(f"Using FolderID={folder_id} for document-based tests.")
 
     print("=" * 60)
-    for result in results:
+    results = []
+    scenario_runners = [
+        lambda: rollback_scenario(admin_token),
+        lambda: delete_race_scenario(admin_token, folder_id),
+        lambda: load_scenario(admin_token, viewer_token),
+    ]
+    for run_scenario in scenario_runners:
+        result = run_scenario()
+        results.append(result)
         print_result(result)
         print("-" * 60)
 
