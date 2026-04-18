@@ -57,8 +57,11 @@ SafeDocs is a secure PDF document management system designed for organisations t
 │   │   ├── auth.py                # JWT auth, RBAC decorators, audit logging
 │   │   ├── __init__.py
 │   │   └── templates/             # HTML templates (login, dashboard, etc.)
+│   ├── remote_sharding_setup.py   # Provision + migrate remote shard databases
+│   ├── sharding_demo.py           # Assignment 4 sharding verification/demo
 │   ├── sql/
 │   │   ├── setup.sql              # UserLogin, SecurityLog tables + indexes
+│   │   ├── sharding_setup.sql     # Assignment 4 shard tables + migration
 │   │   └── benchmark.sql          # EXPLAIN-based benchmark queries
 │   ├── logs/
 │   │   └── audit.log              # Security audit log file
@@ -110,17 +113,56 @@ This runs a three-table transactional scenario over B+ Tree-backed relations and
 - recovery from a journaled commit when checkpointing is interrupted
 
 ### Module B
+Default local-table mode:
+
 ```bash
 # Import the base schema
 mysql -u root -p < safedocs_dump.sql
 # Run Module B setup (auth tables + indexes)
 mysql -u safedocs -psafedocs123 safedocs < Module_B/sql/setup.sql
+# Apply Assignment 4 shard tables and migrate legacy document data
+mysql -u safedocs -psafedocs123 safedocs < Module_B/sql/sharding_setup.sql
 # Install dependencies
 cd Module_B
 pip install -r requirements.txt
 # Run the Flask app from inside Module_B
 python -m app.app
 ```
+
+Optional remote-shard mode for the three-database deployment from the shard-details PDF:
+
+```bash
+cd Module_B
+
+# Coordinator / metadata database (example: shard 1 stores auth, folders, members,
+# DocumentShardDirectory, DocumentIdSequence, and the legacy migration source tables)
+export SAFEDOCS_DB_HOST=10.0.116.184
+export SAFEDOCS_DB_PORT=3307
+export SAFEDOCS_DB_USER=your_team_name
+export SAFEDOCS_DB_PASSWORD=password@123
+export SAFEDOCS_DB_DATABASE=your_team_name
+export SAFEDOCS_DB_UNIX_SOCKET=
+
+# Physical shard routing
+export SAFEDOCS_SHARD_MODE=remote_databases
+export SAFEDOCS_SHARD_HOST=10.0.116.184
+export SAFEDOCS_SHARD_PORTS=3307,3308,3309
+export SAFEDOCS_SHARD_USER=your_team_name
+export SAFEDOCS_SHARD_PASSWORD=password@123
+export SAFEDOCS_SHARD_DATABASE=your_team_name
+export SAFEDOCS_SHARD_UNIX_SOCKET=
+
+# Create the shard-local Document / AccessLog tables and migrate the legacy data
+../.venv/bin/python remote_sharding_setup.py
+
+# Start the app with the same environment
+python -m app.app
+```
+
+In remote mode, the coordinator database is expected to contain the unsharded
+reference tables (`Member`, `Folder`, `Role`, `UserLogin`, `SecurityLog`) plus
+the legacy `Document` / `AccessLog` data that will be redistributed by
+`remote_sharding_setup.py`.
 
 ### Module B Assignment 3 Stress Test
 Start the Flask app first, then run the stress harness in a second terminal:
@@ -134,6 +176,23 @@ The harness checks:
 - rollback integrity on a failed multi-step member creation request
 - concurrent soft-delete safety on the same document
 - mixed read-heavy API load across hundreds of requests with latency summaries
+
+### Module B Assignment 4 Sharding Demo
+After the shard setup is applied:
+
+```bash
+cd Module_B
+../.venv/bin/python sharding_demo.py
+```
+
+The sharding demo verifies:
+- legacy `Document` and `AccessLog` rows were migrated into the shard tables with no loss
+- documents are distributed across three shards using `MOD(DocumentID, 3)`
+- single-key document lookups route to one shard
+- document range queries fan out across multiple shards and merge correctly
+- new document inserts are routed to exactly one shard and recorded in the shard directory
+
+The demo reads the same `SAFEDOCS_*` coordinator / shard environment variables as `app.py`, and it uses Flask's test client, so it does not require a separately running web server.
 
 ## Database Schema
 

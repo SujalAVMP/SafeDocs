@@ -11,8 +11,9 @@ Features:
   - Dual audit logging (SecurityLog table + audit.log)
 """
 
-import os
 import datetime
+import os
+from contextlib import contextmanager
 from pathlib import Path
 
 import pymysql
@@ -25,13 +26,15 @@ try:
     from .auth import (
         hash_password, verify_password,
         create_session_token, verify_session_token, verify_session_token_detailed,
-        login_required, admin_required, log_action, log_document_activity,
+        _get_token_from_request,
+        login_required, admin_required, log_action,
     )
 except ImportError:
     from auth import (
         hash_password, verify_password,
         create_session_token, verify_session_token, verify_session_token_detailed,
-        login_required, admin_required, log_action, log_document_activity,
+        _get_token_from_request,
+        login_required, admin_required, log_action,
     )
 
 try:
@@ -48,21 +51,136 @@ MODULE_B_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = MODULE_B_DIR.parent
 ASSIGNMENT3_CONSOLE = Assignment3Console(REPO_ROOT, MODULE_B_DIR)
 
+DOCUMENT_SHARD_COUNT = 3
+DOCUMENT_SHARD_TABLES = [f"shard_{idx}_document" for idx in range(DOCUMENT_SHARD_COUNT)]
+ACCESSLOG_SHARD_TABLES = [f"shard_{idx}_accesslog" for idx in range(DOCUMENT_SHARD_COUNT)]
+SHARD_MODE = os.environ.get("SAFEDOCS_SHARD_MODE", "local_tables").strip().lower()
+REMOTE_DOCUMENT_TABLE = os.environ.get("SAFEDOCS_REMOTE_DOCUMENT_TABLE", "Document")
+REMOTE_ACCESSLOG_TABLE = os.environ.get("SAFEDOCS_REMOTE_ACCESSLOG_TABLE", "AccessLog")
+
+
+def _env_int(name, default):
+    """Read an integer environment variable with a fallback."""
+    value = os.environ.get(name)
+    if value in (None, ""):
+        return default
+    return int(value)
+
+
+def _env_list(name):
+    """Split a comma-separated environment variable into trimmed values."""
+    value = os.environ.get(name, "")
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _build_connection_config(
+    prefix,
+    *,
+    default_host="localhost",
+    default_user="safedocs",
+    default_password="safedocs123",
+    default_database="safedocs",
+    default_port=3306,
+    default_socket="/run/mysqld/mysqld.sock",
+):
+    """Build a PyMySQL connection config from prefixed environment variables."""
+    config = {
+        "host": os.environ.get(f"{prefix}HOST", default_host),
+        "user": os.environ.get(f"{prefix}USER", default_user),
+        "password": os.environ.get(f"{prefix}PASSWORD", default_password),
+        "database": os.environ.get(f"{prefix}DATABASE", default_database),
+        "port": _env_int(f"{prefix}PORT", default_port),
+        "cursorclass": pymysql.cursors.DictCursor,
+        "autocommit": False,
+    }
+    unix_socket = os.environ.get(f"{prefix}UNIX_SOCKET")
+    if unix_socket is None:
+        unix_socket = default_socket
+    if unix_socket:
+        config["unix_socket"] = unix_socket
+    return config
+
+
+COORDINATOR_DB_CONFIG = _build_connection_config("SAFEDOCS_DB_")
+
+
+def _build_remote_shard_configs():
+    """Resolve remote shard connection configs from environment variables."""
+    base_host = os.environ.get("SAFEDOCS_SHARD_HOST", COORDINATOR_DB_CONFIG["host"])
+    base_user = os.environ.get("SAFEDOCS_SHARD_USER", COORDINATOR_DB_CONFIG["user"])
+    base_password = os.environ.get("SAFEDOCS_SHARD_PASSWORD", COORDINATOR_DB_CONFIG["password"])
+    base_database = os.environ.get("SAFEDOCS_SHARD_DATABASE", COORDINATOR_DB_CONFIG["database"])
+    base_port = _env_int("SAFEDOCS_SHARD_PORT", COORDINATOR_DB_CONFIG.get("port", 3306))
+    base_socket = os.environ.get("SAFEDOCS_SHARD_UNIX_SOCKET", "")
+
+    ports = _env_list("SAFEDOCS_SHARD_PORTS")
+    databases = _env_list("SAFEDOCS_SHARD_DATABASES")
+
+    if ports and len(ports) != DOCUMENT_SHARD_COUNT:
+        raise ValueError(
+            f"SAFEDOCS_SHARD_PORTS must contain {DOCUMENT_SHARD_COUNT} ports, "
+            f"got {len(ports)}."
+        )
+    if databases and len(databases) != DOCUMENT_SHARD_COUNT:
+        raise ValueError(
+            f"SAFEDOCS_SHARD_DATABASES must contain {DOCUMENT_SHARD_COUNT} databases, "
+            f"got {len(databases)}."
+        )
+
+    configs = []
+    for shard_id in range(DOCUMENT_SHARD_COUNT):
+        config = {
+            "host": base_host,
+            "user": base_user,
+            "password": base_password,
+            "database": databases[shard_id] if databases else base_database,
+            "port": int(ports[shard_id]) if ports else base_port,
+            "cursorclass": pymysql.cursors.DictCursor,
+            "autocommit": False,
+        }
+        if base_socket:
+            config["unix_socket"] = base_socket
+        configs.append(config)
+    return configs
+
+
+REMOTE_SHARD_CONFIGS = _build_remote_shard_configs()
+
 # ===================================================================
 # Database connection helper
 # ===================================================================
 
 def get_db():
-    """Return a PyMySQL connection to the safedocs database."""
-    return pymysql.connect(
-        host="localhost",
-        user="safedocs",
-        password="safedocs123",
-        database="safedocs",
-        cursorclass=pymysql.cursors.DictCursor,
-        unix_socket="/run/mysqld/mysqld.sock",
-        autocommit=False,
-    )
+    """Return a PyMySQL connection to the coordinator database."""
+    return pymysql.connect(**COORDINATOR_DB_CONFIG)
+
+
+def get_shard_db(shard_id):
+    """Return a connection to the target shard database."""
+    if SHARD_MODE == "remote_databases":
+        return pymysql.connect(**REMOTE_SHARD_CONFIGS[shard_id])
+    return pymysql.connect(**COORDINATOR_DB_CONFIG)
+
+
+def _get_transaction_shard_db(shard_id, coordinator_db):
+    """Reuse the coordinator DB locally, otherwise open a writable shard DB."""
+    if SHARD_MODE == "local_tables":
+        return coordinator_db, False
+    return get_shard_db(shard_id), True
+
+
+@contextmanager
+def _use_shard_db(shard_id, coordinator_db=None):
+    """Reuse the coordinator DB locally, otherwise open a shard connection."""
+    if SHARD_MODE == "local_tables" and coordinator_db is not None:
+        yield coordinator_db
+        return
+
+    shard_db = get_shard_db(shard_id)
+    try:
+        yield shard_db
+    finally:
+        shard_db.close()
 
 # ===================================================================
 # Helper: fetch current user's role capabilities
@@ -74,22 +192,230 @@ def _get_role_caps(db, role_id):
         return cur.fetchone()
 
 
+def _document_shard_id(document_id):
+    """Return the shard id for a document key using the chosen hash strategy."""
+    return int(document_id) % DOCUMENT_SHARD_COUNT
+
+
+def _document_table_name(document_id=None, shard_id=None):
+    """Resolve the shard table that stores a document row."""
+    resolved_shard_id = _document_shard_id(document_id) if shard_id is None else shard_id
+    if SHARD_MODE == "remote_databases":
+        return REMOTE_DOCUMENT_TABLE
+    return DOCUMENT_SHARD_TABLES[resolved_shard_id]
+
+
+def _accesslog_table_name(document_id=None, shard_id=None):
+    """Resolve the shard table that stores document activity rows."""
+    resolved_shard_id = _document_shard_id(document_id) if shard_id is None else shard_id
+    if SHARD_MODE == "remote_databases":
+        return REMOTE_ACCESSLOG_TABLE
+    return ACCESSLOG_SHARD_TABLES[resolved_shard_id]
+
+
+def _format_datetime_fields(rows, fields):
+    """Convert datetime fields to JSON-friendly strings in-place."""
+    if isinstance(rows, dict):
+        rows = [rows]
+    for row in rows:
+        for field in fields:
+            if row.get(field):
+                row[field] = row[field].strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _reserve_document_id(cur):
+    """Allocate a globally unique document id before choosing a shard."""
+    cur.execute("INSERT INTO DocumentIdSequence (ReservedAt) VALUES (CURRENT_TIMESTAMP)")
+    return cur.lastrowid
+
+
+def _fetch_lookup_map(db, table_name, key_column, value_column, values):
+    """Fetch a {id: label} lookup map from the coordinator database."""
+    values = sorted({value for value in values if value is not None})
+    if not values:
+        return {}
+
+    placeholders = ", ".join(["%s"] * len(values))
+    query = (
+        f"SELECT {key_column} AS lookup_id, {value_column} AS lookup_value "
+        f"FROM {table_name} WHERE {key_column} IN ({placeholders})"
+    )
+    with db.cursor() as cur:
+        cur.execute(query, values)
+        return {row["lookup_id"]: row["lookup_value"] for row in cur.fetchall()}
+
+
+def _enrich_document_rows(db, rows):
+    """Attach coordinator-side uploader and folder labels to shard rows."""
+    if not rows:
+        return rows
+
+    member_names = _fetch_lookup_map(db, "Member", "MemberID", "Name", (row.get("UploadedBy") for row in rows))
+    folder_names = _fetch_lookup_map(
+        db, "Folder", "FolderID", "FolderName", (row.get("FolderID") for row in rows)
+    )
+    for row in rows:
+        uploaded_by = row.get("UploadedBy")
+        folder_id = row.get("FolderID")
+        if uploaded_by in member_names:
+            row["UploaderName"] = member_names[uploaded_by]
+        if folder_id in folder_names:
+            row["FolderName"] = folder_names[folder_id]
+    return rows
+
+
+def _list_documents(db, title_filter=None, id_start=None, id_end=None):
+    """Read documents across shards and merge them in Python."""
+    documents = []
+    for shard_id in range(DOCUMENT_SHARD_COUNT):
+        table_name = _document_table_name(shard_id=shard_id)
+        query = f"""
+            SELECT d.DocumentID, d.Title, d.Description, d.FileSize,
+                   d.IsConfidential, d.IsActive, d.CreatedAt, d.UpdatedAt,
+                   d.UploadedBy, d.FolderID
+            FROM {table_name} d
+            WHERE d.IsActive = TRUE
+        """
+        params = []
+        if title_filter:
+            query += " AND d.Title = %s"
+            params.append(title_filter)
+        if id_start is not None:
+            query += " AND d.DocumentID >= %s"
+            params.append(id_start)
+        if id_end is not None:
+            query += " AND d.DocumentID <= %s"
+            params.append(id_end)
+
+        with _use_shard_db(shard_id, coordinator_db=db) as shard_db:
+            with shard_db.cursor() as cur:
+                cur.execute(query, params)
+                shard_rows = cur.fetchall()
+
+        for row in shard_rows:
+            row["ShardID"] = shard_id
+            documents.append(row)
+
+    _enrich_document_rows(db, documents)
+    if id_start is not None or id_end is not None:
+        documents.sort(key=lambda row: row["DocumentID"])
+    else:
+        documents.sort(key=lambda row: row.get("CreatedAt") or datetime.datetime.min, reverse=True)
+    return documents
+
+
+def _list_recent_activity(db, limit, member_id=None):
+    """Fetch recent activity across shards and decorate it with member names."""
+    rows = []
+    per_shard_limit = max(limit, 1)
+    for shard_id in range(DOCUMENT_SHARD_COUNT):
+        doc_table = _document_table_name(shard_id=shard_id)
+        log_table = _accesslog_table_name(shard_id=shard_id)
+        query = f"""
+            SELECT al.Action, al.AccessTimestamp, al.MemberID, d.Title
+            FROM {log_table} al
+            JOIN {doc_table} d ON al.DocumentID = d.DocumentID
+        """
+        params = []
+        if member_id is not None:
+            query += " WHERE al.MemberID = %s"
+            params.append(member_id)
+        query += " ORDER BY al.AccessTimestamp DESC LIMIT %s"
+        params.append(per_shard_limit)
+
+        with _use_shard_db(shard_id, coordinator_db=db) as shard_db:
+            with shard_db.cursor() as cur:
+                cur.execute(query, params)
+                rows.extend(cur.fetchall())
+
+    member_names = _fetch_lookup_map(db, "Member", "MemberID", "Name", (row["MemberID"] for row in rows))
+    for row in rows:
+        row["Name"] = member_names.get(row["MemberID"], "Unknown Member")
+
+    rows.sort(key=lambda row: row.get("AccessTimestamp") or datetime.datetime.min, reverse=True)
+    return rows[:limit]
+
+
+def _count_documents(db, uploaded_by=None):
+    """Count active documents across all shards, optionally filtered by uploader."""
+    total = 0
+    for shard_id in range(DOCUMENT_SHARD_COUNT):
+        table_name = _document_table_name(shard_id=shard_id)
+        query = f"SELECT COUNT(*) AS cnt FROM {table_name} WHERE IsActive = TRUE"
+        params = []
+        if uploaded_by is not None:
+            query += " AND UploadedBy = %s"
+            params.append(uploaded_by)
+
+        with _use_shard_db(shard_id, coordinator_db=db) as shard_db:
+            with shard_db.cursor() as cur:
+                cur.execute(query, params)
+                total += cur.fetchone()["cnt"]
+    return total
+
+
+def _fetch_document(db, doc_id, select_columns, active_only=False):
+    """Fetch one document row from its target shard and enrich it if needed."""
+    shard_id = _document_shard_id(doc_id)
+    table_name = _document_table_name(shard_id=shard_id)
+    query = f"SELECT {select_columns} FROM {table_name} d WHERE d.DocumentID = %s"
+    params = [doc_id]
+    if active_only:
+        query += " AND d.IsActive = TRUE"
+
+    with _use_shard_db(shard_id, coordinator_db=db) as shard_db:
+        with shard_db.cursor() as cur:
+            cur.execute(query, params)
+            row = cur.fetchone()
+
+    if row is None:
+        return None
+
+    row["ShardID"] = shard_id
+    _enrich_document_rows(db, [row])
+    return row
+
+
 def _wants_json_response():
     """Treat non-browser root requests as API requests."""
     return "text/html" not in request.headers.get("Accept", "").lower()
 
 
-def _record_document_activity(db, document_id, action):
+def _record_document_activity(db, document_id, action, shard_db=None):
     """Append a document-centric activity row for the current request."""
-    log_document_activity(
-        db,
-        document_id=document_id,
-        member_id=g.member_id,
-        action=action,
-        ip=request.remote_addr,
-        user_agent=request.headers.get("User-Agent"),
-        commit=False,
-    )
+    shard_id = _document_shard_id(document_id)
+    table_name = _accesslog_table_name(shard_id=shard_id)
+
+    if shard_db is not None:
+        with shard_db.cursor() as cur:
+            cur.execute(
+                f"""INSERT INTO {table_name}
+                    (DocumentID, MemberID, Action, IPAddress, UserAgent)
+                    VALUES (%s, %s, %s, %s, %s)""",
+                (
+                    document_id,
+                    g.member_id,
+                    action,
+                    request.remote_addr,
+                    request.headers.get("User-Agent"),
+                ),
+            )
+        return
+
+    with _use_shard_db(shard_id, coordinator_db=db) as target_db:
+        with target_db.cursor() as cur:
+            cur.execute(
+                f"""INSERT INTO {table_name}
+                    (DocumentID, MemberID, Action, IPAddress, UserAgent)
+                    VALUES (%s, %s, %s, %s, %s)""",
+                (
+                    document_id,
+                    g.member_id,
+                    action,
+                    request.remote_addr,
+                    request.headers.get("User-Agent"),
+                ),
+            )
 
 
 def _assignment3_permissions():
@@ -122,7 +448,6 @@ def index():
     """Return API welcome JSON or redirect browsers into the UI."""
     if _wants_json_response():
         return jsonify({"message": "Welcome to test APIs"})
-    from auth import _get_token_from_request
     token = _get_token_from_request()
     if token and verify_session_token(token):
         return redirect(url_for("dashboard"))
@@ -195,7 +520,6 @@ def login_submit():
 def logout():
     db = get_db()
     try:
-        from auth import _get_token_from_request
         token = _get_token_from_request()
         payload = verify_session_token(token) if token else None
         mid = payload["member_id"] if payload else None
@@ -210,7 +534,6 @@ def logout():
 @app.route("/isAuth")
 def is_auth():
     """Check whether the current session is valid."""
-    from auth import _get_token_from_request
     token = _get_token_from_request()
     if not token:
         return jsonify({"error": "No session found"}), 401
@@ -240,23 +563,13 @@ def dashboard():
             cur.execute("SELECT COUNT(*) AS cnt FROM Member WHERE IsActive = TRUE")
             stats["total_members"] = cur.fetchone()["cnt"]
 
-            cur.execute("SELECT COUNT(*) AS cnt FROM Document WHERE IsActive = TRUE")
-            stats["total_documents"] = cur.fetchone()["cnt"]
-
             cur.execute("SELECT COUNT(*) AS cnt FROM Folder WHERE IsActive = TRUE")
             stats["total_folders"] = cur.fetchone()["cnt"]
 
             cur.execute("SELECT COUNT(*) AS cnt FROM Department")
             stats["total_departments"] = cur.fetchone()["cnt"]
-            
-            cur.execute(
-                """SELECT al.Action, al.AccessTimestamp, m.Name, d.Title
-                   FROM AccessLog al
-                   JOIN Member m ON al.MemberID = m.MemberID
-                   JOIN Document d ON al.DocumentID = d.DocumentID
-                   ORDER BY al.AccessTimestamp DESC LIMIT 10"""
-            )
-            stats["recent_logs"] = cur.fetchall()
+        stats["total_documents"] = _count_documents(db)
+        stats["recent_logs"] = _list_recent_activity(db, limit=10)
 
         log_action(db, g.member_id, "VIEW_DASHBOARD", None, None,
                    request.remote_addr, True)
@@ -294,27 +607,8 @@ def portfolio(member_id=None):
             if not member:
                 flash("Member not found.", "danger")
                 return redirect(url_for("dashboard"))
-
-            cur.execute(
-                "SELECT COUNT(*) AS cnt FROM Document WHERE UploadedBy = %s AND IsActive = TRUE",
-                (member_id,),
-            )
-            doc_count = cur.fetchone()["cnt"]
-
-            cur.execute(
-                """SELECT recent.Action, recent.AccessTimestamp, doc.Title
-                   FROM (
-                        SELECT DocumentID, Action, AccessTimestamp
-                        FROM AccessLog
-                        WHERE MemberID = %s
-                        ORDER BY AccessTimestamp DESC
-                        LIMIT 10
-                   ) AS recent
-                   JOIN Document doc ON recent.DocumentID = doc.DocumentID
-                   ORDER BY recent.AccessTimestamp DESC""",
-                (member_id,),
-            )
-            recent_activity = cur.fetchall()
+        doc_count = _count_documents(db, uploaded_by=member_id)
+        recent_activity = _list_recent_activity(db, limit=10, member_id=member_id)
 
         log_action(db, g.member_id, "VIEW_PORTFOLIO", "Member", member_id,
                    request.remote_addr, True)
@@ -383,19 +677,8 @@ def member_edit_page(mid):
 def documents_page():
     db = get_db()
     try:
+        documents = _list_documents(db)
         with db.cursor() as cur:
-            cur.execute(
-                """SELECT d.DocumentID, d.Title, d.Description, d.FileSize,
-                          d.IsConfidential, d.IsActive, d.CreatedAt,
-                          m.Name AS UploaderName, f.FolderName
-                   FROM Document d
-                   JOIN Member m ON d.UploadedBy = m.MemberID
-                   JOIN Folder f ON d.FolderID   = f.FolderID
-                   WHERE d.IsActive = TRUE
-                   ORDER BY d.CreatedAt DESC"""
-            )
-            documents = cur.fetchall()
-
             cur.execute("SELECT FolderID, FolderName FROM Folder WHERE IsActive = TRUE ORDER BY FolderName")
             folders = cur.fetchall()
 
@@ -436,15 +719,11 @@ def document_new_page():
 def document_edit_page(doc_id):
     db = get_db()
     try:
+        document = _fetch_document(db, doc_id, "d.*", active_only=True)
+        if not document:
+            flash("Document not found.", "danger")
+            return redirect(url_for("documents_page"))
         with db.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM Document WHERE DocumentID = %s AND IsActive = TRUE",
-                (doc_id,),
-            )
-            document = cur.fetchone()
-            if not document:
-                flash("Document not found.", "danger")
-                return redirect(url_for("documents_page"))
             cur.execute("SELECT FolderID, FolderName FROM Folder WHERE IsActive = TRUE ORDER BY FolderName")
             folders = cur.fetchall()
         return render_template("document_edit.html", document=document,
@@ -757,29 +1036,17 @@ def api_delete_member(mid):
 def api_list_documents():
     db = get_db()
     try:
-        with db.cursor() as cur:
-            title_filter = (request.args.get("title") or "").strip()
-            query = """
-                SELECT d.DocumentID, d.Title, d.Description, d.FileSize,
-                       d.IsConfidential, d.IsActive, d.CreatedAt, d.UpdatedAt,
-                       m.Name AS UploaderName, f.FolderName, d.FolderID
-                FROM Document d
-                JOIN Member m ON d.UploadedBy = m.MemberID
-                JOIN Folder f ON d.FolderID   = f.FolderID
-                WHERE d.IsActive = TRUE
-            """
-            params = []
-            if title_filter:
-                query += " AND d.Title = %s"
-                params.append(title_filter)
-            query += " ORDER BY d.CreatedAt DESC"
-            cur.execute(query, params)
-            docs = cur.fetchall()
+        title_filter = (request.args.get("title") or "").strip()
+        id_start = request.args.get("id_start", type=int)
+        id_end = request.args.get("id_end", type=int)
+        docs = _list_documents(
+            db,
+            title_filter=title_filter or None,
+            id_start=id_start,
+            id_end=id_end,
+        )
 
-        for d in docs:
-            for key in ("CreatedAt", "UpdatedAt"):
-                if d.get(key):
-                    d[key] = d[key].strftime("%Y-%m-%d %H:%M:%S")
+        _format_datetime_fields(docs, ("CreatedAt", "UpdatedAt"))
 
         return jsonify(docs)
     finally:
@@ -791,22 +1058,11 @@ def api_list_documents():
 def api_get_document(doc_id):
     db = get_db()
     try:
-        with db.cursor() as cur:
-            cur.execute(
-                """SELECT d.*, m.Name AS UploaderName, f.FolderName
-                   FROM Document d
-                   JOIN Member m ON d.UploadedBy = m.MemberID
-                   JOIN Folder f ON d.FolderID   = f.FolderID
-                   WHERE d.DocumentID = %s AND d.IsActive = TRUE""",
-                (doc_id,),
-            )
-            doc = cur.fetchone()
+        doc = _fetch_document(db, doc_id, "d.*", active_only=True)
         if not doc:
             return jsonify({"error": "Document not found"}), 404
 
-        for key in ("CreatedAt", "UpdatedAt"):
-            if doc.get(key):
-                doc[key] = doc[key].strftime("%Y-%m-%d %H:%M:%S")
+        _format_datetime_fields(doc, ("CreatedAt", "UpdatedAt"))
 
         return jsonify(doc)
     finally:
@@ -817,6 +1073,7 @@ def api_get_document(doc_id):
 @login_required
 def api_create_document():
     db = get_db()
+    shard_db = None
     try:
         caps = _get_role_caps(db, g.role_id)
         if not caps or not caps.get("CanUpload"):
@@ -831,11 +1088,18 @@ def api_create_document():
                 return jsonify({"error": f"Missing field: {field}"}), 400
 
         with db.cursor() as cur:
+            new_id = _reserve_document_id(cur)
+        shard_id = _document_shard_id(new_id)
+        table_name = _document_table_name(shard_id=shard_id)
+        shard_db, _ = _get_transaction_shard_db(shard_id, db)
+
+        with shard_db.cursor() as cur:
             cur.execute(
-                """INSERT INTO Document
-                   (Title, Description, FilePath, FileSize, UploadedBy, FolderID, IsConfidential)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                f"""INSERT INTO {table_name}
+                    (DocumentID, Title, Description, FilePath, FileSize, UploadedBy, FolderID, IsConfidential)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
+                    new_id,
                     data["Title"],
                     data.get("Description", ""),
                     data.get("FilePath", f"/docs/{data['Title'].replace(' ', '_').lower()}.pdf"),
@@ -845,16 +1109,29 @@ def api_create_document():
                     data.get("IsConfidential", False),
                 ),
             )
-            new_id = cur.lastrowid
-        _record_document_activity(db, new_id, "UPLOAD")
+
+        with db.cursor() as cur:
+            cur.execute(
+                """INSERT INTO DocumentShardDirectory (DocumentID, ShardID, Origin)
+                   VALUES (%s, %s, %s)
+                   ON DUPLICATE KEY UPDATE ShardID = VALUES(ShardID), Origin = VALUES(Origin)""",
+                (new_id, shard_id, "live_insert"),
+            )
+        _record_document_activity(db, new_id, "UPLOAD", shard_db=shard_db)
+        if shard_db is not db:
+            shard_db.commit()
         db.commit()
         log_action(db, g.member_id, "API_CREATE_DOCUMENT", "Document", new_id,
-                   request.remote_addr, True, f"title={data['Title']}")
-        return jsonify({"message": "Document created", "DocumentID": new_id}), 201
+                   request.remote_addr, True, f"title={data['Title']}; shard={shard_id}")
+        return jsonify({"message": "Document created", "DocumentID": new_id, "ShardID": shard_id}), 201
     except pymysql.IntegrityError as exc:
+        if shard_db is not None and shard_db is not db:
+            shard_db.rollback()
         db.rollback()
         return jsonify({"error": str(exc)}), 409
     finally:
+        if shard_db is not None and shard_db is not db:
+            shard_db.close()
         db.close()
 
 
@@ -862,13 +1139,9 @@ def api_create_document():
 @login_required
 def api_update_document(doc_id):
     db = get_db()
+    shard_db = None
     try:
-        with db.cursor() as cur:
-            cur.execute(
-                "SELECT UploadedBy, IsActive FROM Document WHERE DocumentID = %s",
-                (doc_id,),
-            )
-            existing_doc = cur.fetchone()
+        existing_doc = _fetch_document(db, doc_id, "d.UploadedBy, d.IsActive")
         if not existing_doc or not existing_doc["IsActive"]:
             return jsonify({"error": "Document not found"}), 404
 
@@ -895,23 +1168,36 @@ def api_update_document(doc_id):
             return jsonify({"error": "No valid fields to update"}), 400
 
         vals.append(doc_id)
-        with db.cursor() as cur:
+        shard_id = _document_shard_id(doc_id)
+        table_name = _document_table_name(shard_id=shard_id)
+        shard_db, _ = _get_transaction_shard_db(shard_id, db)
+        with shard_db.cursor() as cur:
             cur.execute(
-                f"UPDATE Document SET {', '.join(sets)} WHERE DocumentID = %s AND IsActive = TRUE",
+                f"UPDATE {table_name} SET {', '.join(sets)} WHERE DocumentID = %s AND IsActive = TRUE",
                 vals,
             )
             if cur.rowcount == 0:
+                if shard_db is not db:
+                    shard_db.rollback()
                 db.rollback()
                 return jsonify({"error": "Document not found"}), 404
-        _record_document_activity(db, doc_id, "EDIT")
-        db.commit()
+        _record_document_activity(db, doc_id, "EDIT", shard_db=shard_db)
+        if shard_db is db:
+            db.commit()
+        else:
+            shard_db.commit()
+            db.commit()
         log_action(db, g.member_id, "API_UPDATE_DOCUMENT", "Document", doc_id,
                    request.remote_addr, True, f"fields={list(data.keys())}")
         return jsonify({"message": "Document updated"})
     except pymysql.IntegrityError as exc:
+        if shard_db is not None and shard_db is not db:
+            shard_db.rollback()
         db.rollback()
         return jsonify({"error": str(exc)}), 409
     finally:
+        if shard_db is not None and shard_db is not db:
+            shard_db.close()
         db.close()
 
 
@@ -919,6 +1205,7 @@ def api_update_document(doc_id):
 @login_required
 def api_delete_document(doc_id):
     db = get_db()
+    shard_db = None
     try:
         caps = _get_role_caps(db, g.role_id)
         if not caps or not caps.get("CanDelete"):
@@ -926,20 +1213,31 @@ def api_delete_document(doc_id):
                        request.remote_addr, True, "role lacks CanDelete")
             return jsonify({"error": "You do not have delete permission"}), 403
 
-        with db.cursor() as cur:
+        shard_id = _document_shard_id(doc_id)
+        table_name = _document_table_name(shard_id=shard_id)
+        shard_db, _ = _get_transaction_shard_db(shard_id, db)
+        with shard_db.cursor() as cur:
             cur.execute(
-                "UPDATE Document SET IsActive = FALSE WHERE DocumentID = %s AND IsActive = TRUE",
+                f"UPDATE {table_name} SET IsActive = FALSE WHERE DocumentID = %s AND IsActive = TRUE",
                 (doc_id,),
             )
             if cur.rowcount == 0:
+                if shard_db is not db:
+                    shard_db.rollback()
                 db.rollback()
                 return jsonify({"error": "Document not found"}), 404
-        _record_document_activity(db, doc_id, "DELETE")
-        db.commit()
+        _record_document_activity(db, doc_id, "DELETE", shard_db=shard_db)
+        if shard_db is db:
+            db.commit()
+        else:
+            shard_db.commit()
+            db.commit()
         log_action(db, g.member_id, "API_DELETE_DOCUMENT", "Document", doc_id,
                    request.remote_addr, True)
         return jsonify({"message": "Document deleted"})
     finally:
+        if shard_db is not None and shard_db is not db:
+            shard_db.close()
         db.close()
 
 # ===================================================================
